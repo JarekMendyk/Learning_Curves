@@ -1,0 +1,215 @@
+```{r}
+# Learn about learning curves on the internet sites
+# https://www.r-bloggers.com/why-big-data-learning-curves/
+# https://www.r-bloggers.com/learning-from-learning-curves/
+
+# The aim is to plot "Andrew Ng" like learning curves to assess a need of greater dataset by 
+# analyzing "bias and variance"" of the model 
+
+##################################################################
+#
+##################################################################
+
+
+```
+
+```{r}
+
+##################################################################
+#
+#       Modification of an algoritm from the R-bloggers
+#    https://www.r-bloggers.com/why-big-data-learning-curves/
+#
+##################################################################
+
+library(data.table)
+library(caret)
+library(ggplot2)
+library(dplyr)
+library(doParallel)
+
+# We will be using RMSE score
+rmse <- function(actual, predicted) sqrt( mean( (actual - predicted)^2 ))
+
+run_learning_curve <- function(predictors,outcome,vss=200, num_tss=10, min_tss=100, method = "lm"){
+  # predictors - data frame contains predictors(independent variables, "x")
+  # outcome - a vector of dependent variable("y")
+  # vss - the validation set size 
+  # tss - the number of different training set sizes we want to plot 
+  # num_tss - the smallest training set size to start with
+  
+  max_tss <- nrow(predictors) - vss
+  tss_vector <- seq(min_tss, max_tss, length=num_tss)
+
+  data.table::rbindlist( lapply (tss_vector, function(tss){
+    vs_idx <- sample(1:nrow(predictors), vss)             #as for me - this should be taken outside of the inner function
+    ts_eligible <- setdiff(1:nrow(predictors), vs_idx)
+    ts <- sample(ts_eligible, tss)
+    fit <- train(predictors[ts,], outcome[ts],method = method)
+   
+    training_error <- rmse(outcome[ts], predict(fit, predictors[ts,]))  
+    validation_error <- rmse(outcome[vs_idx], predict(fit, predictors[vs_idx,]))
+    
+    data.frame(tss=tss, 
+                error_type = factor(c("training", "validation"), 
+                                    levels=c("validation", "training")),
+                error=c(training_error, validation_error))
+   
+  }) )
+}
+
+
+
+# Remove rows from data1 with NAs in 'temp' and 'cisnienie' variables
+dat <- data1 %>%
+  dplyr::filter(!is.na(data1$temp))
+
+
+cl<-makeCluster(3)
+registerDoParallel(cl)
+
+learning_curve <- run_learning_curve(dplyr::select(dat, -traffic),dat$traffic, num_tss=10)
+
+stopCluster(cl) 
+ggplot(learning_curve, aes(x=tss, y=error, linetype=error_type)) + 
+  geom_line(size=1, col="blue") + xlab("training set size") + geom_hline(yintercept=2000, linetype=3)
+
+
+```
+
+```{r}
+##################################################################
+#
+#
+#           We add averaging by cross validation sets 
+#       using k-fold split to smooth outcoming plot and not to 
+#   get affected by arbitrary chosen only one cross validation set
+#
+#
+#       Modification of an algoritm from the R-bloggers
+#    https://www.r-bloggers.com/why-big-data-learning-curves/
+#
+##################################################################
+
+library(data.table)
+library(caret)
+library(ggplot2)
+library(dplyr)
+library(doParallel)
+
+# We will be using RMSE score
+rmse <- function(actual, predicted) sqrt( mean( (actual - predicted)^2 ))
+
+run_learning_curve <- function(predictors,outcome, num_tss=10, min_tss=100, method = "lm", cv_split = 3){
+  # predictors - data frame containing predictors(independent variables, "x")
+  # outcome - a vector of dependent variable("y")
+  # cv_split - number of folds(validation sets = test sets) we split the dataset into. 
+  #            The final outcome of the learning curve is an average of the calculated 
+  #            errors (cv and test) for each validation set(fold) 
+  # num_tss - the number of different training set sizes we divide the whole training 
+  #           set into, the number of x-axis ticks in learning curve plot
+  # min_tss - the smallest training set size to start with
+  # method - CARET model method   
+  
+  # split input set into cross validation sets  
+  cv_folds <- createFolds(1:nrow(predictors), k = cv_split)
+  
+  # output vector of errors (training and validation - hence it needs to be multiplied by 2)  
+  sum_errors <- rep(0, 2*num_tss) 
+  
+   for (fold in cv_folds){
+     # use cross validation set to calculate cross validation set errors for each model trained on trainings sets 
+     # and calcualte corresponding training set errors for each training set
+     max_tss <- nrow(predictors) - length(fold)
+     tss_vector <- seq(min_tss, max_tss, length=num_tss)
+     # vs_idx <- fold
+     
+     error_dataframe <- data.table::rbindlist( lapply (tss_vector, function(tss){
+           ts_eligible <- setdiff(1:nrow(predictors), fold)
+           ts <- sample(ts_eligible, tss)
+           
+           fit <- train(predictors[ts,], outcome[ts],method = method)
+           training_error <- rmse(outcome[ts], predict(fit, predictors[ts,]))  
+           validation_error <- rmse(outcome[fold], predict(fit, predictors[fold,]))
+                  
+           data.frame(tss=tss, 
+                       error_type = factor(c("training", "validation"), 
+                                           levels=c("validation", "training")),
+                       error=c(training_error, validation_error))
+           } 
+        ))
+      
+      sum_errors <- sum_errors+error_dataframe[,3]  
+   }
+   
+  averaged_error_dataframe =  data.frame(error_dataframe[,-3],error = sum_errors/cv_split)
+  return(averaged_error_dataframe)
+}
+
+
+# Remove rows from data1 with NAs in 'temp' and 'cisnienie' variables
+dat <- data1 %>%
+  dplyr::filter(!is.na(data1$temp))
+
+# calculate learning curve
+cl<-makeCluster(3)
+registerDoParallel(cl)
+learning_curve <- run_learning_curve(dplyr::select(dat, -traffic),dat$traffic, num_tss=10,cv_split = 5)
+stopCluster(cl) 
+
+# Plot learning curve
+ggplot(learning_curve, aes(x=tss, y = error, linetype = error_type)) + 
+  geom_line(size=1, col="blue") + xlab("training set size") + geom_hline(yintercept=2000, linetype=3)
+
+
+
+
+
+```
+
+
+```{r}
+
+##########################################################################
+# Random forest - with modificated run_learning_curve function
+##########################################################################
+
+library(randomForest)
+
+cl<-makeCluster(3)
+registerDoParallel(cl)
+start.time <- Sys.time()
+
+learning_curve <- run_learning_curve(dplyr::select(dat, -traffic),dat$traffic, num_tss=8, min_tss=200, cv_split = 5, method = "rf")
+
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken
+stopCluster(cl) 
+
+ggplot(learning_curve, aes(x=tss, y=error, linetype=error_type)) + 
+  geom_line(size=1, col="blue") + xlab("training set size") + geom_hline(yintercept=1000, linetype=3)
+```
+
+```{r}
+##########################################################################
+# Random forest - with modificated run_learning_curve function
+##########################################################################
+
+library(Cubist)
+
+cl<-makeCluster(3)
+registerDoParallel(cl)
+start.time <- Sys.time()
+
+learning_curve <- run_learning_curve(dplyr::select(dat, -traffic),dat$traffic, num_tss=8, min_tss=200, cv_split = 5, method = "cubist")
+
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken
+stopCluster(cl) 
+
+ggplot(learning_curve, aes(x=tss, y=error, linetype=error_type)) + 
+  geom_line(size=1, col="blue") + xlab("training set size") + geom_hline(yintercept=1000, linetype=3)
+```
+
