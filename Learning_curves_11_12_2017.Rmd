@@ -24,7 +24,7 @@ dat <- data1 %>%
 
 write.table(dat, file = "learning_curve_data.txt", sep = ";", row.names = FALSE)
 
-
+sdr <-read.table()
 ```
 
 ```{r}
